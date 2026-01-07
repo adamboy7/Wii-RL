@@ -264,7 +264,8 @@ def main():
             raise
         print(f"{guidance} Proceeding with weights-only resume.")
         training_state = {}
-        agent.env_steps = 0
+        parsed_step = parse_checkpoint_step(checkpoint_base)
+        agent.env_steps = (parsed_step or 0) * 250000
         agent.grad_steps = 0
         agent.replay_ratio_cnt = 0
         agent.eval_every = None
@@ -329,7 +330,10 @@ def main():
     def handle_shutdown_signal(signum, frame):
         print(f"Shutdown signal ({signum}) received. Killing Dolphin instances.")
         if hasattr(signal, "SIGBREAK") and signum == signal.SIGBREAK:
-            print(f"Saving checkpoint due to SIGBREAK: {checkpoint_name}")
+            print(
+                "Saving checkpoint due to SIGBREAK: "
+                f"{checkpoint_name} (state: {checkpoint_base}.state.pt)"
+            )
             agent.save_model()
             agent.save_training_state(
                 checkpoint_base, eval_every=eval_every, next_eval=next_eval
