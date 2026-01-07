@@ -135,6 +135,11 @@ def main():
             "weights-only loading."
         ),
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Suppress warnings when training state hyperparameters differ from CLI args.",
+    )
 
     args = parser.parse_args()
 
@@ -262,6 +267,23 @@ def main():
         agent.replay_ratio_cnt = 0
         agent.eval_every = None
         agent.next_eval = None
+
+    discrepancies = []
+    epsilon_state = training_state.get("epsilon", {})
+    if "eps_steps" in epsilon_state and epsilon_state["eps_steps"] != args.eps_steps:
+        discrepancies.append(
+            ("eps_steps", epsilon_state["eps_steps"], args.eps_steps)
+        )
+    if discrepancies and not args.force:
+        warning_lines = [
+            "Warning: training state hyperparameters differ from CLI args:"
+        ]
+        warning_lines.extend(
+            f"  - {name}: state={state_value} cli={cli_value}"
+            for name, state_value, cli_value in discrepancies
+        )
+        warning_lines.append("Use --force to suppress this warning.")
+        print("\n".join(warning_lines))
 
     loaded_eval_every = training_state.get("eval_every")
     loaded_next_eval = training_state.get("next_eval")
