@@ -18,11 +18,57 @@ from BTR import Agent, format_arguments, non_default_args
 from DolphinEnv import DolphinEnv
 
 
+CHECKPOINT_EXTENSIONS = (".pt", ".model", ".pth")
+
+
+def strip_checkpoint_extension(checkpoint_name: str) -> str:
+    for extension in CHECKPOINT_EXTENSIONS:
+        if checkpoint_name.endswith(extension):
+            return checkpoint_name[: -len(extension)]
+    return checkpoint_name
+
+
+def parse_checkpoint_step(checkpoint_name: str) -> int | None:
+    base_name = strip_checkpoint_extension(checkpoint_name)
+    match = re.match(r"^.+_(?P<step>\d+)M$", base_name)
+    if match:
+        return int(match.group("step"))
+    return None
+
+
+def resolve_latest_checkpoint(run_dir: str) -> str:
+    candidates = []
+    for entry in os.listdir(run_dir):
+        if not entry.endswith(CHECKPOINT_EXTENSIONS):
+            continue
+        path = os.path.join(run_dir, entry)
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            continue
+        step = parse_checkpoint_step(entry)
+        candidates.append((step, mtime, entry))
+
+    if not candidates:
+        raise FileNotFoundError(
+            f"No checkpoint artifacts found in {run_dir} with extensions {CHECKPOINT_EXTENSIONS}."
+        )
+
+    steps_available = [candidate for candidate in candidates if candidate[0] is not None]
+    if steps_available:
+        max_step = max(candidate[0] for candidate in steps_available)
+        step_candidates = [candidate for candidate in steps_available if candidate[0] == max_step]
+        return max(step_candidates, key=lambda candidate: candidate[1])[2]
+
+    return max(candidates, key=lambda candidate: candidate[1])[2]
+
+
 def derive_agent_name(checkpoint_name: str) -> str:
-    match = re.match(r"^(?P<agent>.+)_\d+M$", checkpoint_name)
+    base_name = strip_checkpoint_extension(os.path.basename(checkpoint_name))
+    match = re.match(r"^(?P<agent>.+)_\d+M$", base_name)
     if match:
         return match.group("agent")
-    return checkpoint_name
+    return base_name
 
 
 def load_existing_scores(agent_name: str) -> list:
@@ -35,7 +81,15 @@ def load_existing_scores(agent_name: str) -> list:
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--checkpoint", type=str, required=True)
+    parser.add_argument("--checkpoint", type=str)
+    parser.add_argument(
+        "--latest",
+        action="store_true",
+        help=(
+            "Resolve the most recent checkpoint in run_dir based on step suffix "
+            "(e.g., *_123M) or file mtime as a fallback."
+        ),
+    )
     parser.add_argument("--run_dir", type=str, default=".")
 
     parser.add_argument("--game", type=str, default="MarioKart")
@@ -91,7 +145,14 @@ def main():
     if args.run_dir:
         os.chdir(args.run_dir)
 
-    checkpoint_name = args.checkpoint
+    if args.latest and args.checkpoint:
+        parser.error("--latest cannot be used together with --checkpoint.")
+
+    if args.latest or not args.checkpoint:
+        checkpoint_name = resolve_latest_checkpoint(".")
+        print(f"Resolved latest checkpoint: {checkpoint_name}")
+    else:
+        checkpoint_name = args.checkpoint
     agent_name = derive_agent_name(checkpoint_name)
 
     game = args.game
