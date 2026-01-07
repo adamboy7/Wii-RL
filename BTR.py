@@ -388,6 +388,24 @@ class SumTree():
   def total(self):
     return self.sum_tree[0]
 
+  def state_dict(self):
+    return {
+      "index": self.index,
+      "size": self.size,
+      "full": self.full,
+      "tree_start": self.tree_start,
+      "sum_tree": self.sum_tree,
+      "max": self.max,
+    }
+
+  def load_state_dict(self, state):
+    self.index = state["index"]
+    self.size = state["size"]
+    self.full = state["full"]
+    self.tree_start = state["tree_start"]
+    self.sum_tree = state["sum_tree"]
+    self.max = state["max"]
+
 
 class PER:
     def __init__(self, size, device, n, envs, gamma, alpha=0.2, beta=0.4, framestack=4, imagex=84, imagey=84, rgb=False):
@@ -735,6 +753,74 @@ class PER:
         self.max_prio = max(self.max_prio, np.max(priorities))
         self.st.update(idxs, priorities ** self.alpha)
 
+    def state_dict(self):
+        return {
+            "st": self.st.state_dict(),
+            "data": self.data,
+            "index": self.index,
+            "size": self.size,
+            "storage_size": self.storage_size,
+            "gamma": self.gamma,
+            "capacity": self.capacity,
+            "point_mem_idx": self.point_mem_idx,
+            "state_mem_idx": self.state_mem_idx,
+            "reward_mem_idx": self.reward_mem_idx,
+            "imagex": self.imagex,
+            "imagey": self.imagey,
+            "max_prio": self.max_prio,
+            "framestack": self.framestack,
+            "alpha": self.alpha,
+            "beta": self.beta,
+            "eps": self.eps,
+            "last_terminal": self.last_terminal,
+            "tstep_counter": self.tstep_counter,
+            "n_step": self.n_step,
+            "state_buffer": self.state_buffer,
+            "reward_buffer": self.reward_buffer,
+            "state_mem": self.state_mem,
+            "action_mem": self.action_mem,
+            "reward_mem": self.reward_mem,
+            "done_mem": self.done_mem,
+            "trun_mem": self.trun_mem,
+            "trans_dtype": self.trans_dtype,
+            "blank_trans": self.blank_trans,
+            "pointer_mem": self.pointer_mem,
+            "overlap": self.overlap,
+        }
+
+    def load_state_dict(self, state):
+        self.st.load_state_dict(state["st"])
+        self.data = state["data"]
+        self.index = state["index"]
+        self.size = state["size"]
+        self.storage_size = state["storage_size"]
+        self.gamma = state["gamma"]
+        self.capacity = state["capacity"]
+        self.point_mem_idx = state["point_mem_idx"]
+        self.state_mem_idx = state["state_mem_idx"]
+        self.reward_mem_idx = state["reward_mem_idx"]
+        self.imagex = state["imagex"]
+        self.imagey = state["imagey"]
+        self.max_prio = state["max_prio"]
+        self.framestack = state["framestack"]
+        self.alpha = state["alpha"]
+        self.beta = state["beta"]
+        self.eps = state["eps"]
+        self.last_terminal = state["last_terminal"]
+        self.tstep_counter = state["tstep_counter"]
+        self.n_step = state["n_step"]
+        self.state_buffer = state["state_buffer"]
+        self.reward_buffer = state["reward_buffer"]
+        self.state_mem = state["state_mem"]
+        self.action_mem = state["action_mem"]
+        self.reward_mem = state["reward_mem"]
+        self.done_mem = state["done_mem"]
+        self.trun_mem = state["trun_mem"]
+        self.trans_dtype = state["trans_dtype"]
+        self.blank_trans = state["blank_trans"]
+        self.pointer_mem = state["pointer_mem"]
+        self.overlap = state["overlap"]
+
 
 ############## A few smaller functions to assist the main program
 
@@ -970,11 +1056,30 @@ class Agent:
         self.tgt_net.load_state_dict(self.net.state_dict())
 
     def save_model(self):
-        self.net.save_checkpoint(self.agent_name + "_" + str(int((self.env_steps // 250000))) + "M")
+        self.net.save_checkpoint(self.checkpoint_name())
 
     def load_models(self, name):
         self.net.load_checkpoint(name)
         self.tgt_net.load_checkpoint(name)
+
+    def checkpoint_name(self):
+        return self.agent_name + "_" + str(int((self.env_steps // 250000))) + "M"
+
+    def save_training_state(self, name):
+        training_state = {
+            "env_steps": self.env_steps,
+            "grad_steps": self.grad_steps,
+            "epsilon": {
+                "eps": self.epsilon.eps,
+                "eps_steps": self.eps_steps,
+                "eps_final": self.eps_final,
+            },
+            "per_beta": self.per_beta,
+            "replay_ratio_cnt": self.replay_ratio_cnt,
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "memory": self.memory.state_dict(),
+        }
+        torch.save(training_state, name + ".state.pt")
 
     def learn(self):
         if self.replay_period != 1:
@@ -1288,6 +1393,11 @@ def main():
 
     def handle_shutdown_signal(signum, frame):
         print(f"Shutdown signal ({signum}) received. Killing Dolphin instances.")
+        if hasattr(signal, "SIGBREAK") and signum == signal.SIGBREAK:
+            checkpoint_name = agent.checkpoint_name()
+            print(f"Saving checkpoint due to SIGBREAK: {checkpoint_name}")
+            agent.save_model()
+            agent.save_training_state(checkpoint_name)
         kill_dolphin_processes()
         raise KeyboardInterrupt
 
