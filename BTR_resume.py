@@ -332,7 +332,7 @@ def main():
             print(f"Saving checkpoint due to SIGBREAK: {checkpoint_name}")
             agent.save_model()
             agent.save_training_state(
-                checkpoint_name, eval_every=eval_every, next_eval=next_eval
+                checkpoint_base, eval_every=eval_every, next_eval=next_eval
             )
         kill_dolphin_processes()
         raise KeyboardInterrupt
