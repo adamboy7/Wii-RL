@@ -245,6 +245,7 @@ def main():
         imagex=140,
         imagey=75,
         spi=spi,
+        loading_checkpoint=True,
     )
 
     agent.load_models(checkpoint_name)
