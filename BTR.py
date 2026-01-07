@@ -827,13 +827,25 @@ class PER:
 
 class EpsilonGreedy:
     def __init__(self, eps_start, eps_steps, eps_final, action_space):
+        self.eps_start = eps_start
         self.eps = eps_start
         self.steps = eps_steps
         self.eps_final = eps_final
         self.action_space = action_space
+        self.steps_taken = 0
 
     def update_eps(self):
-        self.eps = max(self.eps - (self.eps - self.eps_final) / self.steps, self.eps_final)
+        self.steps_taken += 1
+        self.eps = self._eps_for_step(self.steps_taken)
+
+    def _eps_for_step(self, steps_taken):
+        if self.steps <= 0:
+            return self.eps_final
+        progress = min(steps_taken, self.steps)
+        return max(self.eps_start - (self.eps_start - self.eps_final) * (progress / self.steps), self.eps_final)
+
+    def sync_eps(self):
+        self.eps = self._eps_for_step(self.steps_taken)
 
     def choose_action(self):
         if np.random.random() > self.eps:
@@ -1079,8 +1091,10 @@ class Agent:
             "grad_steps": self.grad_steps,
             "epsilon": {
                 "eps": self.epsilon.eps,
+                "eps_start": self.eps_start,
                 "eps_steps": self.eps_steps,
                 "eps_final": self.eps_final,
+                "steps_taken": self.epsilon.steps_taken,
             },
             "per_beta": self.per_beta,
             "replay_ratio_cnt": self.replay_ratio_cnt,
@@ -1096,8 +1110,14 @@ class Agent:
         self.grad_steps = training_state["grad_steps"]
         epsilon_state = training_state["epsilon"]
         self.epsilon.eps = epsilon_state["eps"]
+        self.eps_start = epsilon_state.get("eps_start", self.eps_start)
         self.eps_steps = epsilon_state["eps_steps"]
         self.eps_final = epsilon_state["eps_final"]
+        self.epsilon.steps_taken = epsilon_state.get("steps_taken", 0)
+        self.epsilon.eps_start = self.eps_start
+        self.epsilon.steps = self.eps_steps
+        self.epsilon.eps_final = self.eps_final
+        self.epsilon.sync_eps()
         self.per_beta = training_state["per_beta"]
         self.replay_ratio_cnt = training_state["replay_ratio_cnt"]
         self.optimizer.load_state_dict(training_state["optimizer_state_dict"])
