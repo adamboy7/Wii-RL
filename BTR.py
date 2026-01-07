@@ -881,7 +881,7 @@ class Agent:
                  , rr=1, maxpool_size=6, lr=1e-4, target_replace=500, spectral=True, discount=0.997, taus=8, model_size=2,
                  linear_size=512, ncos=64, non_factorised=False, replay_period=1, framestack=4, rgb=False, imagex=84,
                  imagey=84, per_alpha=0.2, max_mem_size=1048576, eps_steps=2000000, eps_disable=True, n=3,
-                 munch_alpha=0.9, grad_clip=10, layer_norm=True, spi=1):
+                 munch_alpha=0.9, grad_clip=10, layer_norm=True, spi=1, loading_checkpoint=False):
 
         self.per_alpha = per_alpha
 
@@ -896,7 +896,7 @@ class Agent:
 
         self.layer_norm = layer_norm
 
-        self.loading_checkpoint = False
+        self.loading_checkpoint = loading_checkpoint
 
         self.per_beta = 0.45
 
@@ -1080,6 +1080,20 @@ class Agent:
             "memory": self.memory.state_dict(),
         }
         torch.save(training_state, name + ".state.pt")
+
+    def load_training_state(self, path):
+        training_state = torch.load(path, map_location=self.device)
+        self.env_steps = training_state["env_steps"]
+        self.grad_steps = training_state["grad_steps"]
+        self.epsilon.eps = training_state["epsilon"]["eps"]
+        self.eps_steps = training_state["epsilon"]["eps_steps"]
+        self.eps_final = training_state["epsilon"]["eps_final"]
+        self.epsilon.steps = training_state["epsilon"]["eps_steps"]
+        self.epsilon.eps_final = training_state["epsilon"]["eps_final"]
+        self.per_beta = training_state["per_beta"]
+        self.replay_ratio_cnt = training_state["replay_ratio_cnt"]
+        self.optimizer.load_state_dict(training_state["optimizer_state_dict"])
+        self.memory.load_state_dict(training_state["memory"])
 
     def learn(self):
         if self.replay_period != 1:
