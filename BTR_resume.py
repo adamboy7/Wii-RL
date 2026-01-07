@@ -263,11 +263,24 @@ def main():
         agent.eval_every = None
         agent.next_eval = None
 
-    if training_state.get("eval_every") is not None:
-        eval_every = training_state["eval_every"]
-        next_eval = training_state.get("next_eval")
+    loaded_eval_every = training_state.get("eval_every")
+    loaded_next_eval = training_state.get("next_eval")
 
-    if next_eval is None:
+    if loaded_eval_every is not None:
+        eval_every = loaded_eval_every
+    else:
+        print(
+            "Training state missing eval_every; using current value "
+            f"({eval_every})."
+        )
+
+    if loaded_next_eval is not None:
+        next_eval = loaded_next_eval
+    else:
+        print(
+            "Training state missing next_eval; deriving fallback based on "
+            f"env_steps={agent.env_steps} and eval_every={eval_every}."
+        )
         next_eval = ((agent.env_steps // eval_every) + 1) * eval_every
 
     agent.eval_every = eval_every
