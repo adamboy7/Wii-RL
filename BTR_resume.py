@@ -71,6 +71,16 @@ def main():
         default=True,
         help="Save training state alongside model checkpoints on eval intervals.",
     )
+    parser.add_argument(
+        "--resume_without_state",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Allow resuming without a saved training state. "
+            "When the .state.pt file is missing, reset counters and continue with "
+            "weights-only loading."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -172,7 +182,25 @@ def main():
     )
 
     agent.load_models(checkpoint_name)
-    training_state = agent.load_training_state(checkpoint_name)
+    state_path = f"{checkpoint_name}.state.pt"
+    try:
+        training_state = agent.load_training_state(checkpoint_name)
+    except FileNotFoundError:
+        guidance = (
+            f"Training state not found at {state_path}. "
+            "Generate it by enabling --save_state_on_eval or by sending SIGBREAK "
+            "(Ctrl+Break) to dump a state checkpoint."
+        )
+        if not args.resume_without_state:
+            print(guidance)
+            raise
+        print(f"{guidance} Proceeding with weights-only resume.")
+        training_state = {}
+        agent.env_steps = 0
+        agent.grad_steps = 0
+        agent.replay_ratio_cnt = 0
+        agent.eval_every = None
+        agent.next_eval = None
 
     if training_state.get("eval_every") is not None:
         eval_every = training_state["eval_every"]
