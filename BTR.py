@@ -1014,6 +1014,8 @@ class Agent:
 
         self.replay_ratio_cnt = 0
         self.eval_mode = False
+        self.eval_every = None
+        self.next_eval = None
 
     def prep_evaluation(self):
         self.eval_net = deepcopy(self.net)
@@ -1078,7 +1080,7 @@ class Agent:
     def checkpoint_name(self):
         return self.agent_name + "_" + str(int((self.env_steps // 250000))) + "M"
 
-    def save_training_state(self, name):
+    def save_training_state(self, name, eval_every=None, next_eval=None):
         rng_state = {
             "random": random.getstate(),
             "numpy": np.random.get_state(),
@@ -1102,6 +1104,14 @@ class Agent:
             "memory": self.memory.state_dict(),
             "rng_state": rng_state,
         }
+        if eval_every is None:
+            eval_every = self.eval_every
+        if next_eval is None:
+            next_eval = self.next_eval
+        if eval_every is not None:
+            training_state["eval_every"] = eval_every
+        if next_eval is not None:
+            training_state["next_eval"] = next_eval
         torch.save(training_state, name + ".state.pt")
 
     def load_training_state(self, name):
@@ -1129,6 +1139,11 @@ class Agent:
             torch.set_rng_state(rng_state["torch"])
             if torch.cuda.is_available() and "torch_cuda" in rng_state:
                 torch.cuda.set_rng_state_all(rng_state["torch_cuda"])
+        self.eval_every = training_state.get("eval_every")
+        self.next_eval = training_state.get("next_eval")
+        if self.eval_every is not None and self.next_eval is None:
+            self.next_eval = self.eval_every
+        return training_state
 
     def learn(self):
         if self.replay_period != 1:
@@ -1419,6 +1434,8 @@ def main():
                   framestack=framestack, per_alpha=per_alpha, layer_norm=layer_norm,
                   eps_steps=eps_steps, eps_disable=eps_disable, n=nstep,
                   munch_alpha=munch_alpha, grad_clip=grad_clip, imagex=140, imagey=75, spi=spi)
+    agent.eval_every = eval_every
+    agent.next_eval = next_eval
 
     scores_temp = []
     steps = 0
@@ -1446,7 +1463,7 @@ def main():
             checkpoint_name = agent.checkpoint_name()
             print(f"Saving checkpoint due to SIGBREAK: {checkpoint_name}")
             agent.save_model()
-            agent.save_training_state(checkpoint_name)
+            agent.save_training_state(checkpoint_name, eval_every=eval_every, next_eval=next_eval)
         kill_dolphin_processes()
         raise KeyboardInterrupt
 
@@ -1549,6 +1566,7 @@ def main():
             current_eval += 1
 
             next_eval += eval_every
+            agent.next_eval = next_eval
     except KeyboardInterrupt:
         print("Keyboard interrupt received. Killing Dolphin instances.")
         kill_dolphin_processes()
