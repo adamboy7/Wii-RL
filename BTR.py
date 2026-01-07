@@ -3,6 +3,8 @@ import time
 import argparse
 import multiprocessing as mp
 import os
+import signal
+import atexit
 import torch
 import torch as T
 import torch.nn.functional as F
@@ -16,6 +18,7 @@ from math import sqrt
 import math
 import matplotlib.pyplot as plt
 from DolphinEnv import DolphinEnv
+import psutil
 
 """
 This is the Beyond The Rainbow algorithm from ICML 2025 (https://arxiv.org/abs/2411.03820)
@@ -1278,18 +1281,35 @@ def main():
         from torchsummary import summary
         summary(agent.net, (framestack, 75, 140))
 
-    while steps < n_steps:
-        steps += num_envs
-        try:
-            action = agent.choose_action(observation)
-        except Exception as e:
-            print(f"Error: {e}")
-            print(f"Observation: {observation}")
-            raise Exception("Stop! Error Occurred")
+    def kill_dolphin_processes():
+        for proc in psutil.process_iter():
+            if proc.name() == "Dolphin.exe":
+                proc.kill()
 
-        env.step_async(action)
-        agent.learn()
-        observation_, reward, done_, trun_, info = env.step_wait()
+    def handle_shutdown_signal(signum, frame):
+        print(f"Shutdown signal ({signum}) received. Killing Dolphin instances.")
+        kill_dolphin_processes()
+        raise KeyboardInterrupt
+
+    atexit.register(kill_dolphin_processes)
+    signal.signal(signal.SIGINT, handle_shutdown_signal)
+    signal.signal(signal.SIGTERM, handle_shutdown_signal)
+    if hasattr(signal, "SIGBREAK"):
+        signal.signal(signal.SIGBREAK, handle_shutdown_signal)
+
+    try:
+        while steps < n_steps:
+            steps += num_envs
+            try:
+                action = agent.choose_action(observation)
+            except Exception as e:
+                print(f"Error: {e}")
+                print(f"Observation: {observation}")
+                raise Exception("Stop! Error Occurred")
+
+            env.step_async(action)
+            agent.learn()
+            observation_, reward, done_, trun_, info = env.step_wait()
 
         for i in range(num_envs):
             scores_count[i] += reward[i]
@@ -1370,6 +1390,10 @@ def main():
             current_eval += 1
 
             next_eval += eval_every
+    except KeyboardInterrupt:
+        print("Keyboard interrupt received. Killing Dolphin instances.")
+        kill_dolphin_processes()
+        raise
 
     # wait for our evaluations to finish before we quit the program
     for process in processes:
