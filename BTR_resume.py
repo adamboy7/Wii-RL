@@ -65,6 +65,12 @@ def main():
     parser.add_argument("--layer_norm", type=int, default=0)
     parser.add_argument("--eps_steps", type=int, default=2000000)
     parser.add_argument("--eps_disable", type=int, default=1)
+    parser.add_argument(
+        "--save_state_on_eval",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Save training state alongside model checkpoints on eval intervals.",
+    )
 
     args = parser.parse_args()
 
@@ -276,6 +282,11 @@ def main():
             if steps >= next_eval or steps >= n_steps:
                 print("Saving Model...")
                 agent.save_model()
+                if args.save_state_on_eval:
+                    checkpoint_name = agent.checkpoint_name()
+                    agent.save_training_state(
+                        checkpoint_name, eval_every=eval_every, next_eval=next_eval
+                    )
 
                 if not args.testing:
                     np.save(f"{agent_name}Experiment.npy", np.array(scores))
