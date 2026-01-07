@@ -158,6 +158,7 @@ def main():
         print(f"Resolved latest checkpoint: {checkpoint_name}")
     else:
         checkpoint_name = args.checkpoint
+    checkpoint_base = strip_checkpoint_extension(checkpoint_name)
     agent_name = derive_agent_name(checkpoint_name)
 
     game = args.game
@@ -249,9 +250,9 @@ def main():
     )
 
     agent.load_models(checkpoint_name)
-    state_path = f"{checkpoint_name}.state.pt"
+    state_path = f"{checkpoint_base}.state.pt"
     try:
-        training_state = agent.load_training_state(checkpoint_name)
+        training_state = agent.load_training_state(checkpoint_base)
     except FileNotFoundError:
         guidance = (
             f"Training state not found at {state_path}. "
@@ -263,7 +264,8 @@ def main():
             raise
         print(f"{guidance} Proceeding with weights-only resume.")
         training_state = {}
-        agent.env_steps = 0
+        parsed_step = parse_checkpoint_step(checkpoint_base)
+        agent.env_steps = (parsed_step or 0) * 250000
         agent.grad_steps = 0
         agent.replay_ratio_cnt = 0
         agent.eval_every = None
@@ -328,10 +330,13 @@ def main():
     def handle_shutdown_signal(signum, frame):
         print(f"Shutdown signal ({signum}) received. Killing Dolphin instances.")
         if hasattr(signal, "SIGBREAK") and signum == signal.SIGBREAK:
-            print(f"Saving checkpoint due to SIGBREAK: {checkpoint_name}")
+            print(
+                "Saving checkpoint due to SIGBREAK: "
+                f"{checkpoint_name} (state: {checkpoint_base}.state.pt)"
+            )
             agent.save_model()
             agent.save_training_state(
-                checkpoint_name, eval_every=eval_every, next_eval=next_eval
+                checkpoint_base, eval_every=eval_every, next_eval=next_eval
             )
         kill_dolphin_processes()
         raise KeyboardInterrupt
