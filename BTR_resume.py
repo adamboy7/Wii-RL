@@ -158,6 +158,7 @@ def main():
         print(f"Resolved latest checkpoint: {checkpoint_name}")
     else:
         checkpoint_name = args.checkpoint
+    checkpoint_base = strip_checkpoint_extension(checkpoint_name)
     agent_name = derive_agent_name(checkpoint_name)
 
     game = args.game
@@ -249,9 +250,9 @@ def main():
     )
 
     agent.load_models(checkpoint_name)
-    state_path = f"{checkpoint_name}.state.pt"
+    state_path = f"{checkpoint_base}.state.pt"
     try:
-        training_state = agent.load_training_state(checkpoint_name)
+        training_state = agent.load_training_state(checkpoint_base)
     except FileNotFoundError:
         guidance = (
             f"Training state not found at {state_path}. "
