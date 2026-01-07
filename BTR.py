@@ -5,6 +5,7 @@ import multiprocessing as mp
 import os
 import signal
 import atexit
+import random
 import torch
 import torch as T
 import torch.nn.functional as F
@@ -1066,6 +1067,13 @@ class Agent:
         return self.agent_name + "_" + str(int((self.env_steps // 250000))) + "M"
 
     def save_training_state(self, name):
+        rng_state = {
+            "random": random.getstate(),
+            "numpy": np.random.get_state(),
+            "torch": torch.get_rng_state(),
+        }
+        if torch.cuda.is_available():
+            rng_state["torch_cuda"] = torch.cuda.get_rng_state_all()
         training_state = {
             "env_steps": self.env_steps,
             "grad_steps": self.grad_steps,
@@ -1078,8 +1086,29 @@ class Agent:
             "replay_ratio_cnt": self.replay_ratio_cnt,
             "optimizer_state_dict": self.optimizer.state_dict(),
             "memory": self.memory.state_dict(),
+            "rng_state": rng_state,
         }
         torch.save(training_state, name + ".state.pt")
+
+    def load_training_state(self, name):
+        training_state = torch.load(name + ".state.pt", map_location=self.net.device)
+        self.env_steps = training_state["env_steps"]
+        self.grad_steps = training_state["grad_steps"]
+        epsilon_state = training_state["epsilon"]
+        self.epsilon.eps = epsilon_state["eps"]
+        self.eps_steps = epsilon_state["eps_steps"]
+        self.eps_final = epsilon_state["eps_final"]
+        self.per_beta = training_state["per_beta"]
+        self.replay_ratio_cnt = training_state["replay_ratio_cnt"]
+        self.optimizer.load_state_dict(training_state["optimizer_state_dict"])
+        self.memory.load_state_dict(training_state["memory"])
+        rng_state = training_state.get("rng_state", {})
+        if rng_state:
+            random.setstate(rng_state["random"])
+            np.random.set_state(rng_state["numpy"])
+            torch.set_rng_state(rng_state["torch"])
+            if torch.cuda.is_available() and "torch_cuda" in rng_state:
+                torch.cuda.set_rng_state_all(rng_state["torch_cuda"])
 
     def learn(self):
         if self.replay_period != 1:
