@@ -178,14 +178,14 @@ def main():
     agent.eval_every = eval_every
     agent.next_eval = next_eval
 
-    scores_temp = []
+    scores = load_existing_scores(agent_name)
+    scores_temp = [score[0] for score in scores]
     steps = agent.env_steps
     last_steps = steps
     last_time = time.time()
-    episodes = 0
+    episodes = len(scores)
     current_eval = 0
     scores_count = [0 for _ in range(num_envs)]
-    scores = load_existing_scores(agent_name)
     observation, info = env.reset()
     processes = []
 
