@@ -59,6 +59,11 @@ id = int((instance_info_folder / f'instance_id{pid}.txt').read_text().strip())
 alive_num = increment_alive()
 
 num_envs = int((instance_info_folder / 'num_envs.txt').read_text().strip())
+states_shm_name_path = instance_info_folder / 'states_shm_name.txt'
+if states_shm_name_path.exists():
+    states_shm_name = states_shm_name_path.read_text().strip()
+else:
+    states_shm_name = "states_shm"
 
 log_path = instance_info_folder / f'slave_{id}.log'
 def log_exc(exc: BaseException):
@@ -315,10 +320,10 @@ class DolphinInstance:
         try:
             # setup shared memory
             if(sys.version_info[1] < 13):
-                self.shm = shared_memory.SharedMemory(name="states_shm")
+                self.shm = shared_memory.SharedMemory(name=states_shm_name)
             else:
                 # Make sure that the shared memory doesn't get deleted on upon exiting script by setting track=False
-                self.shm = shared_memory.SharedMemory(name="states_shm", track=False)
+                self.shm = shared_memory.SharedMemory(name=states_shm_name, track=False)
             self.states = np.ndarray(
                 (self.num_envs, self.framestack, self.window_y, self.window_x),
                 dtype=np.uint8,

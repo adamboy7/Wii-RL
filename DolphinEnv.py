@@ -13,18 +13,7 @@ import threading
 import signal
 import hashlib
 import platform
-
-# remove any existing shared memory
-try:
-    existing_shm = shared_memory.SharedMemory(name="states_shm")
-    print("Found existing shared memory, cleaning up...")
-    existing_shm.close()
-    existing_shm.unlink()
-except FileNotFoundError:
-    # no existing shared memory, good
-    pass
-except Exception as e:
-    print(f"Error cleaning old shared memory: {e}")
+import uuid
 
 FILE_PATH = Path.cwd() / "shared_value.txt"
 SITE_FILE_PATH = Path.cwd() / "shared_site.txt"
@@ -108,6 +97,10 @@ class DolphinEnv:
         # write the number of envs for the slaves to read
         (self.instance_info_folder / 'num_envs.txt').write_text(str(self.num_envs))
 
+        self.shm_name = f"states_shm_{os.getpid()}_{uuid.uuid4().hex}"
+        (self.instance_info_folder / 'states_shm_name.txt').write_text(self.shm_name)
+        self._cleanup_shared_memory(self.shm_name)
+
         self.ids = list(range(self.num_envs))
         self.script_pids = [-1] * self.num_envs
 
@@ -115,7 +108,7 @@ class DolphinEnv:
 
         self.shm = shared_memory.SharedMemory(create=True,
                                               size=self.num_envs * self.framestack * self.window_x * self.window_y,
-                                              name="states_shm")
+                                              name=self.shm_name)
         self.states = np.ndarray(
             (self.num_envs, self.framestack, self.window_y, self.window_x),
             dtype=np.uint8,
@@ -144,6 +137,24 @@ class DolphinEnv:
         (self.instance_info_folder / 'pid_num.txt').write_text('0')
         for i in range(self.num_envs):
             self.create_dolphin(i)
+
+    def _cleanup_shared_memory(self, name):
+        try:
+            existing_shm = shared_memory.SharedMemory(name=name)
+        except FileNotFoundError:
+            return
+        except Exception as e:
+            print(f"Error checking old shared memory: {e}")
+            return
+
+        try:
+            existing_shm.close()
+            existing_shm.unlink()
+            print(f"Found existing shared memory '{name}', cleaning up...")
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"Error cleaning old shared memory '{name}': {e}")
 
     def _check_iso_validity(self):
         valid_numbers = [

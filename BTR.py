@@ -3,6 +3,9 @@ import time
 import argparse
 import multiprocessing as mp
 import os
+import signal
+import atexit
+import random
 import torch
 import torch as T
 import torch.nn.functional as F
@@ -16,6 +19,7 @@ from math import sqrt
 import math
 import matplotlib.pyplot as plt
 from DolphinEnv import DolphinEnv
+import psutil
 
 """
 This is the Beyond The Rainbow algorithm from ICML 2025 (https://arxiv.org/abs/2411.03820)
@@ -385,6 +389,24 @@ class SumTree():
   def total(self):
     return self.sum_tree[0]
 
+  def state_dict(self):
+    return {
+      "index": self.index,
+      "size": self.size,
+      "full": self.full,
+      "tree_start": self.tree_start,
+      "sum_tree": self.sum_tree,
+      "max": self.max,
+    }
+
+  def load_state_dict(self, state):
+    self.index = state["index"]
+    self.size = state["size"]
+    self.full = state["full"]
+    self.tree_start = state["tree_start"]
+    self.sum_tree = state["sum_tree"]
+    self.max = state["max"]
+
 
 class PER:
     def __init__(self, size, device, n, envs, gamma, alpha=0.2, beta=0.4, framestack=4, imagex=84, imagey=84, rgb=False):
@@ -732,18 +754,98 @@ class PER:
         self.max_prio = max(self.max_prio, np.max(priorities))
         self.st.update(idxs, priorities ** self.alpha)
 
+    def state_dict(self):
+        return {
+            "st": self.st.state_dict(),
+            "data": self.data,
+            "index": self.index,
+            "size": self.size,
+            "storage_size": self.storage_size,
+            "gamma": self.gamma,
+            "capacity": self.capacity,
+            "point_mem_idx": self.point_mem_idx,
+            "state_mem_idx": self.state_mem_idx,
+            "reward_mem_idx": self.reward_mem_idx,
+            "imagex": self.imagex,
+            "imagey": self.imagey,
+            "max_prio": self.max_prio,
+            "framestack": self.framestack,
+            "alpha": self.alpha,
+            "beta": self.beta,
+            "eps": self.eps,
+            "last_terminal": self.last_terminal,
+            "tstep_counter": self.tstep_counter,
+            "n_step": self.n_step,
+            "state_buffer": self.state_buffer,
+            "reward_buffer": self.reward_buffer,
+            "state_mem": self.state_mem,
+            "action_mem": self.action_mem,
+            "reward_mem": self.reward_mem,
+            "done_mem": self.done_mem,
+            "trun_mem": self.trun_mem,
+            "trans_dtype": self.trans_dtype,
+            "blank_trans": self.blank_trans,
+            "pointer_mem": self.pointer_mem,
+            "overlap": self.overlap,
+        }
+
+    def load_state_dict(self, state):
+        self.st.load_state_dict(state["st"])
+        self.data = state["data"]
+        self.index = state["index"]
+        self.size = state["size"]
+        self.storage_size = state["storage_size"]
+        self.gamma = state["gamma"]
+        self.capacity = state["capacity"]
+        self.point_mem_idx = state["point_mem_idx"]
+        self.state_mem_idx = state["state_mem_idx"]
+        self.reward_mem_idx = state["reward_mem_idx"]
+        self.imagex = state["imagex"]
+        self.imagey = state["imagey"]
+        self.max_prio = state["max_prio"]
+        self.framestack = state["framestack"]
+        self.alpha = state["alpha"]
+        self.beta = state["beta"]
+        self.eps = state["eps"]
+        self.last_terminal = state["last_terminal"]
+        self.tstep_counter = state["tstep_counter"]
+        self.n_step = state["n_step"]
+        self.state_buffer = state["state_buffer"]
+        self.reward_buffer = state["reward_buffer"]
+        self.state_mem = state["state_mem"]
+        self.action_mem = state["action_mem"]
+        self.reward_mem = state["reward_mem"]
+        self.done_mem = state["done_mem"]
+        self.trun_mem = state["trun_mem"]
+        self.trans_dtype = state["trans_dtype"]
+        self.blank_trans = state["blank_trans"]
+        self.pointer_mem = state["pointer_mem"]
+        self.overlap = state["overlap"]
+
 
 ############## A few smaller functions to assist the main program
 
 class EpsilonGreedy:
     def __init__(self, eps_start, eps_steps, eps_final, action_space):
+        self.eps_start = eps_start
         self.eps = eps_start
         self.steps = eps_steps
         self.eps_final = eps_final
         self.action_space = action_space
+        self.steps_taken = 0
 
     def update_eps(self):
-        self.eps = max(self.eps - (self.eps - self.eps_final) / self.steps, self.eps_final)
+        self.steps_taken += 1
+        self.eps = self._eps_for_step(self.steps_taken)
+
+    def _eps_for_step(self, steps_taken):
+        if self.steps <= 0:
+            return self.eps_final
+        progress = min(steps_taken, self.steps)
+        return max(self.eps_start - (self.eps_start - self.eps_final) * (progress / self.steps), self.eps_final)
+
+    def sync_eps(self):
+        self.eps = self._eps_for_step(self.steps_taken)
 
     def choose_action(self):
         if np.random.random() > self.eps:
@@ -792,7 +894,7 @@ class Agent:
                  , rr=1, maxpool_size=6, lr=1e-4, target_replace=500, spectral=True, discount=0.997, taus=8, model_size=2,
                  linear_size=512, ncos=64, non_factorised=False, replay_period=1, framestack=4, rgb=False, imagex=84,
                  imagey=84, per_alpha=0.2, max_mem_size=1048576, eps_steps=2000000, eps_disable=True, n=3,
-                 munch_alpha=0.9, grad_clip=10, layer_norm=True, spi=1):
+                 munch_alpha=0.9, grad_clip=10, layer_norm=True, spi=1, loading_checkpoint=False):
 
         self.per_alpha = per_alpha
 
@@ -807,7 +909,7 @@ class Agent:
 
         self.layer_norm = layer_norm
 
-        self.loading_checkpoint = False
+        self.loading_checkpoint = loading_checkpoint
 
         self.per_beta = 0.45
 
@@ -912,6 +1014,8 @@ class Agent:
 
         self.replay_ratio_cnt = 0
         self.eval_mode = False
+        self.eval_every = None
+        self.next_eval = None
 
     def prep_evaluation(self):
         self.eval_net = deepcopy(self.net)
@@ -967,11 +1071,79 @@ class Agent:
         self.tgt_net.load_state_dict(self.net.state_dict())
 
     def save_model(self):
-        self.net.save_checkpoint(self.agent_name + "_" + str(int((self.env_steps // 250000))) + "M")
+        self.net.save_checkpoint(self.checkpoint_name())
 
     def load_models(self, name):
         self.net.load_checkpoint(name)
         self.tgt_net.load_checkpoint(name)
+
+    def checkpoint_name(self):
+        return self.agent_name + "_" + str(int((self.env_steps // 250000))) + "M"
+
+    def save_training_state(self, name, eval_every=None, next_eval=None):
+        rng_state = {
+            "random": random.getstate(),
+            "numpy": np.random.get_state(),
+            "torch": torch.get_rng_state(),
+        }
+        if torch.cuda.is_available():
+            rng_state["torch_cuda"] = torch.cuda.get_rng_state_all()
+        training_state = {
+            "env_steps": self.env_steps,
+            "grad_steps": self.grad_steps,
+            "epsilon": {
+                "eps": self.epsilon.eps,
+                "eps_start": self.eps_start,
+                "eps_steps": self.eps_steps,
+                "eps_final": self.eps_final,
+                "steps_taken": self.epsilon.steps_taken,
+            },
+            "per_beta": self.per_beta,
+            "replay_ratio_cnt": self.replay_ratio_cnt,
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "memory": self.memory.state_dict(),
+            "rng_state": rng_state,
+        }
+        if eval_every is None:
+            eval_every = self.eval_every
+        if next_eval is None:
+            next_eval = self.next_eval
+        if eval_every is not None:
+            training_state["eval_every"] = eval_every
+        if next_eval is not None:
+            training_state["next_eval"] = next_eval
+        torch.save(training_state, name + ".state.pt")
+
+    def load_training_state(self, name):
+        training_state = torch.load(name + ".state.pt", map_location=self.net.device)
+        self.env_steps = training_state["env_steps"]
+        self.grad_steps = training_state["grad_steps"]
+        epsilon_state = training_state["epsilon"]
+        self.epsilon.eps = epsilon_state["eps"]
+        self.eps_start = epsilon_state.get("eps_start", self.eps_start)
+        self.eps_steps = epsilon_state["eps_steps"]
+        self.eps_final = epsilon_state["eps_final"]
+        self.epsilon.steps_taken = epsilon_state.get("steps_taken", 0)
+        self.epsilon.eps_start = self.eps_start
+        self.epsilon.steps = self.eps_steps
+        self.epsilon.eps_final = self.eps_final
+        self.epsilon.sync_eps()
+        self.per_beta = training_state["per_beta"]
+        self.replay_ratio_cnt = training_state["replay_ratio_cnt"]
+        self.optimizer.load_state_dict(training_state["optimizer_state_dict"])
+        self.memory.load_state_dict(training_state["memory"])
+        rng_state = training_state.get("rng_state", {})
+        if rng_state:
+            random.setstate(rng_state["random"])
+            np.random.set_state(rng_state["numpy"])
+            torch.set_rng_state(rng_state["torch"])
+            if torch.cuda.is_available() and "torch_cuda" in rng_state:
+                torch.cuda.set_rng_state_all(rng_state["torch_cuda"])
+        self.eval_every = training_state.get("eval_every")
+        self.next_eval = training_state.get("next_eval")
+        if self.eval_every is not None and self.next_eval is None:
+            self.next_eval = self.eval_every
+        return training_state
 
     def learn(self):
         if self.replay_period != 1:
@@ -1262,6 +1434,8 @@ def main():
                   framestack=framestack, per_alpha=per_alpha, layer_norm=layer_norm,
                   eps_steps=eps_steps, eps_disable=eps_disable, n=nstep,
                   munch_alpha=munch_alpha, grad_clip=grad_clip, imagex=140, imagey=75, spi=spi)
+    agent.eval_every = eval_every
+    agent.next_eval = next_eval
 
     scores_temp = []
     steps = 0
@@ -1278,18 +1452,40 @@ def main():
         from torchsummary import summary
         summary(agent.net, (framestack, 75, 140))
 
-    while steps < n_steps:
-        steps += num_envs
-        try:
-            action = agent.choose_action(observation)
-        except Exception as e:
-            print(f"Error: {e}")
-            print(f"Observation: {observation}")
-            raise Exception("Stop! Error Occurred")
+    def kill_dolphin_processes():
+        for proc in psutil.process_iter():
+            if proc.name() == "Dolphin.exe":
+                proc.kill()
 
-        env.step_async(action)
-        agent.learn()
-        observation_, reward, done_, trun_, info = env.step_wait()
+    def handle_shutdown_signal(signum, frame):
+        print(f"Shutdown signal ({signum}) received. Killing Dolphin instances.")
+        if hasattr(signal, "SIGBREAK") and signum == signal.SIGBREAK:
+            checkpoint_name = agent.checkpoint_name()
+            print(f"Saving checkpoint due to SIGBREAK: {checkpoint_name}")
+            agent.save_model()
+            agent.save_training_state(checkpoint_name, eval_every=eval_every, next_eval=next_eval)
+        kill_dolphin_processes()
+        raise KeyboardInterrupt
+
+    atexit.register(kill_dolphin_processes)
+    signal.signal(signal.SIGINT, handle_shutdown_signal)
+    signal.signal(signal.SIGTERM, handle_shutdown_signal)
+    if hasattr(signal, "SIGBREAK"):
+        signal.signal(signal.SIGBREAK, handle_shutdown_signal)
+
+    try:
+        while steps < n_steps:
+            steps += num_envs
+            try:
+                action = agent.choose_action(observation)
+            except Exception as e:
+                print(f"Error: {e}")
+                print(f"Observation: {observation}")
+                raise Exception("Stop! Error Occurred")
+
+            env.step_async(action)
+            agent.learn()
+            observation_, reward, done_, trun_, info = env.step_wait()
 
         for i in range(num_envs):
             scores_count[i] += reward[i]
@@ -1370,6 +1566,11 @@ def main():
             current_eval += 1
 
             next_eval += eval_every
+            agent.next_eval = next_eval
+    except KeyboardInterrupt:
+        print("Keyboard interrupt received. Killing Dolphin instances.")
+        kill_dolphin_processes()
+        raise
 
     # wait for our evaluations to finish before we quit the program
     for process in processes:
